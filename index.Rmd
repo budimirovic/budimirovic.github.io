@@ -1,0 +1,426 @@
+---
+title: "Learning R and data science techniques through the context of the price of bitcoin"
+output: html_document
+---
+
+## Introduction
+
+One of the twenty-first century's weirdest developments has been the meteoric rise of bitcoin, and the incredible wealth the so-called "crypto-millionaires" have made off of it. This has made the science of predicting the movement of the price of bitcoin a very lucrative endeavour, should one succeed. As a budding data scientist, I have decided to attempt to analyze the movement of the price of bitcoin using data science. In conjunction with data on bitcoin, I have decided to use google trends on the search term 'bitcoin'. One of the more interesting data sources on the web, Google makes their search trends public, so one can see what the world is searching for, and see how certain seraches evolve over time.
+
+I have documented my process in a small tutorial here, and you can follow along to see what i do and how I do it. If you so desire, you could even try your own analysis. And who knows, maybe you might find some hidden connection within this data or some other dataset related to bitcoin, and make millions off of investing in crypto in this fashion.
+
+## Required tools.
+
+This tutorial is done in R. The recommended IDE to use is RStudio, which can be downloaded here: http://www.rstudio.com/ide
+
+In addition, you will need the following packages:
+
+```{r, results="hide", message = FALSE, warning = FALSE}
+library(ggplot2)
+library(e1071)
+library(tidyverse)
+library(randomForest)
+library(caret)
+```
+
+## Gathering Data
+
+The data regarding bitcoin is all public, as it is a publicly traded commodity. However, one very nice person on Kaggle has done the work of collecting this data and keeping it up to date, so to save time you can just use his dataset, found here:
+https://www.kaggle.com/valeriovaccaro/cryptocoinshistoricalprices
+
+Now, Bitcoin has really skyrocketed in popularity over the last several years. From the graph below, you can see that the trade volume has really increased dramatically in the last five years. As a result, I made the choice to do analysis on data in the last two years.
+
+If you want you can do analysis on a longer time scale, though I really would keep it to 2013 at the earliest. Regardless of the time scale you choose, you can download the google trends data for any time frame from https://trends.google.com/trends/explore?q=bitcoin. Select the time scale you want, and click the download button in the top corner of the graph.
+
+Move both of these file into the same directory as your R markdown, and you're ready to go!
+
+
+![](btc_transactions.png)
+
+(Source: https://en.wikipedia.org/wiki/History_of_Bitcoin)
+
+Begin by reading in the data sets.
+
+```{r, warning = FALSE}
+crypto <- read_csv("CryptocoinsHistoricalPrices.csv")
+head(crypto)
+
+googleTrends <- read_csv("multiTimeline.csv")
+head(googleTrends)
+```
+
+## Tidying our data
+
+We will need to format the date in the google trends table so we can merge it successfully with the crypto table.
+
+```{r}
+# match the date column name with that of the crypto table and make the "bitcoin" column name more informative
+colnames(googleTrends)[1] <- "Date"
+colnames(googleTrends)[2] <- "Search_Index"
+
+# reformat the date to match the crypto table
+googleTrends$Date <- strptime(as.character(googleTrends$Date), "%m/%d/%Y")
+googleTrends$Date <- format(googleTrends$Date, "%Y-%m-%d")
+
+head(googleTrends)
+```
+
+Next we will need to make the crypto table compatible with the google trends table. Because google trends statistics are only available by the week, we need to aggregate the crypto data by week. To do this we will take the mean of the Closing price and trade volume. Then, we will merge the two tables together.
+
+```{r, results="hide", message = FALSE, error= FALSE, warning = FALSE}
+# We are only interested in data regarding bitcoin, the rest can be filtered
+crypto <- subset(crypto, grepl("^BTC$", coin)) # We use regex to find rows with 'coin'='BTC'
+
+crypto <- subset(crypto, Date >= as.Date("2016-05-04")) 
+
+n.colmeans = function(df, n) {
+    # Aggregate the data for n days
+    aggregate(x = df,
+              by = list(gl(ceiling(nrow(df)/n), n)[1:nrow(df)]),
+              FUN = mean)
+}
+# aggregate the data over week periods
+crypto <- n.colmeans(crypto, 7)
+
+# reformat the date column
+crypto$Date <- strptime(as.character(crypto$Date), "%Y-%m-%d")
+crypto$Date <- format(crypto$Date, "%Y-%m-%d")
+
+# Make the rows match that of the google trends table
+crypto <- crypto[ nrow(crypto):1, ]
+crypto = crypto[-1,]
+row.names(crypto) <- 1:104
+```
+
+```{r}
+agg_btc_goog <- cbind(crypto, googleTrends)
+agg_btc_goog <- agg_btc_goog[-c(1, 2, 3, 4,5,6,9,10)]
+
+head(agg_btc_goog)
+```
+
+## Exploratory Data Analysis
+
+Now that we have our merged table, we are ready to begin analyzing our data and looking for trends. I've found that it is best to start broad, and then go deeper in your analysis. So, to start out, I graphed the search index and the closing price vs time. I scaled the search index by a factor of 175 so the values would match up with the price of bitcoin, as values are not incredibly important right now so much as relationships.
+
+```{r}
+ggplot(agg_btc_goog, aes(as.Date(Date))) + # Data on the x axis
+  geom_line(aes(y=Close), colour="red") +
+  geom_line(aes(y=Search_Index*175), colour="green") +
+  labs(title="Price of Bitcoin and Google trends search index * 175 vs time")
+```
+
+We can immediately see a some sort of a relationship. Though they do not grow in exactly the same way, the graphs look enough alike to warrant curiousity, and to invite us to dig deeper.
+
+The next thing we can look at is the how these two indexes are changing in relation to one another. Our dataset on bitcoin originally contained information on this, labeled delta, though that information is no longer accurate since we averaged the data over one week periods. So we quickly recalculate this.
+
+```{r}
+# Reassign delta to a newly difference of values for the averages of close
+agg_btc_goog$Delta <- diff(as.matrix(agg_btc_goog$Close)) %>%
+  append(0, after=0)
+
+# Divide by close to get percent change
+agg_btc_goog <-  transform(agg_btc_goog, Delta = Delta / Close)
+
+# Since we will be doing this for google search data as well, it is best to differentiate the two names
+colnames(agg_btc_goog)[3] <- "Delta_BTC"
+```
+
+And we do the same for the google trends data.
+
+```{r}
+agg_btc_goog$Delta_goog <- diff(as.matrix(agg_btc_goog$Search_Index)) %>%
+  append(0, after=0)
+
+agg_btc_goog <-  transform(agg_btc_goog, Delta_goog = Delta_goog / Search_Index)
+
+head(agg_btc_goog)
+```
+
+Now, we can graph those two newly calculated values.
+
+```{r}
+# Graph both delta btc and delta google trends as a function of time
+ggplot(agg_btc_goog, aes(as.Date(Date))) +
+  geom_line(aes(y=Delta_BTC), colour="red") +
+  geom_line(aes(y=Delta_goog), colour="green") +
+  labs(title="Percent change of price of BTC and of Google trends search index vs time")
+```
+
+There definitely seems to be a trend that both graphs are following. But the relationship does not look to be that strong.
+
+Next we try graphing the two deltas versus one another, with change in price of bitcoin as a function of change in google trends.
+
+```{r}
+ggplot(agg_btc_goog, aes(x = Delta_goog, y = Delta_BTC)) +
+  geom_line() +
+  labs(title="Percent change of bitcoin price vs percent change of google trends search index")
+```
+
+This relationship does not look promising enough to investigate. So, we look onwards!
+
+Next we try mapping the change in price of bitcoin as a function of the google trends search index score.
+
+```{r}
+ggplot(agg_btc_goog, aes(x = Search_Index, y = Delta_BTC)) +
+  geom_line() +
+  labs(title="Percent change in price of bitcoin vs Google trends seach index")
+```
+
+This does not look like it has any sort of strong relationship. Next, we can try the closing value as a function of the search index.
+
+```{r}
+ggplot(agg_btc_goog, aes(x = Search_Index, y = Close)) +
+  geom_line() +
+  labs(title="Closing price of bitcoin vs Google trends search index")
+```
+
+Now we've got something! This kind of looks like a linear relationship! Though, more work is required to confirm this.
+
+## Hypothesis Testing
+
+We believe that we have found a linear relationship between the value of the google trends search index and the closing price of bitcoin. We begin by taking the linear regression of the data, and adding it to the plot.
+
+```{r}
+ggplot(agg_btc_goog, aes(x = Search_Index, y = Close)) +
+  geom_line() + 
+  geom_smooth(method='lm') + # Add regression line to the graph
+  labs(title="Closing price of bitcoin vs Google trends search index with linear regression")
+```
+
+This looks promising, though not entirely convincing. We can look more closely at the spread about this line with a residuals graph:
+
+```{r}
+# lm is the linear regression function. Super useful!
+search_reg <- lm(Close ~ Search_Index,agg_btc_goog)
+
+ggplot(data = search_reg, aes(x=fitted.values(search_reg), y=residuals(search_reg))) +
+  geom_point() +
+  labs(title="Residuals of lin reg of closing value as a function of google trends index")
+```
+
+Not a very convincing residuals graph, and it makes me question the linear relationship. There is definitely heteroscedasticity here, which is another way of saying the spread is not equal. Now, this does not necessarily mean that there is not a relationship, but we will need to do some more work to see if that is the case.
+
+We will try to normalize the closing price of bitcoin using a Box Cox transformation. You can read more on that here: http://www.statisticshowto.com/box-cox-transformation/.
+
+```{r}
+distBCMod <- caret::BoxCoxTrans(agg_btc_goog$Close)
+print(distBCMod)
+
+agg_btc_goog <- cbind(agg_btc_goog,
+                      Close_New = predict(distBCMod, agg_btc_goog$Close))
+                      # append the transformed variable to our data frame
+
+lm_boxcox <- lm(Close_New ~ Search_Index,agg_btc_goog)
+
+ggplot(data = search_reg, aes(x=fitted.values(lm_boxcox), y=residuals(lm_boxcox))) +
+  geom_point() +
+  labs(title="Residuals of lin reg of Box-Cox normalized closing value as a function of google trends index")
+```
+
+This residual plot still is far from convincing.
+
+Still, we can try to graph the normalized closing value versus the search index, and see if we can't see anything.
+
+```{r}
+ggplot(agg_btc_goog, aes(x = Search_Index, y = Close_New)) +
+  geom_line() +
+  labs(title="Box-Cox normalized closing price of bitcoin vs google trends search index")
+```
+
+Well now! That looks like a logarithmic relationship. We can test this using a logarithmic regression to see how well it fits.
+
+```{r}
+ggplot(agg_btc_goog, aes(x = Search_Index, y = Close_New)) +
+  geom_line() +
+  stat_smooth(method="lm",formula=y~log(x),fill="red") +
+  labs(title="Normalized closing price of BTC vs Google trends search index with log reg")
+```
+
+It's a half decent fit, but not a great fit. We can check the residual plot again to check the spread:
+
+```{r}
+lm_log <- lm(Close_New ~ log(Search_Index),agg_btc_goog)
+
+ggplot(data = search_reg, aes(x=fitted.values(lm_log), y=residuals(lm_log))) +
+  geom_point() +
+  labs(title="Residuals of log reg of normalized closing value as a function of search index")
+```
+
+Not great. It seems that if these two variables have some sort of a statistical relationship, a much more complex analysis will be required to find it. In either case, the hypothesis that we set out to test, that there is a linear relationship between the value of the google trends search index and the closing price of bitcoin, is false.
+
+### Back to the drawing board
+
+A variable we haven't explored yet is volume. Perhaps that could have some relationship with the Google trends search index? Let's try it out.
+
+```{r}
+ggplot(agg_btc_goog, aes(x = Search_Index, y = Volume)) +
+  geom_line() +
+  labs(title="Google trends search index vs volume of trades")
+```
+
+How about volume vs price of bitcoin?
+
+```{r}
+ggplot(agg_btc_goog, aes(x = Close, y = Volume)) +
+  geom_line() +
+  labs(title="Price of BTC vs Volume of BTC trades")
+```
+
+THis too looks like it could be a linear relationship. We can try the same tests that we had done before, and see if we fare any better.
+
+```{r}
+ggplot(agg_btc_goog, aes(x = Close, y = Volume)) +
+  geom_line() +
+  stat_smooth(method="lm",fill="red") +
+  labs(title="Price of BTC vs Volume of BTC trades")
+
+lm_vol <- lm(Volume ~ Close,agg_btc_goog)
+
+ggplot(data = search_reg, aes(x=fitted.values(lm_vol), y=residuals(lm_vol))) +
+  geom_point() +
+  labs(title="Residuals of linear regression model for Price of BTC vs Volume of BTC trades")
+```
+
+This seems to be the same case of uneven variability within the regression that we saw before. Once again, if this data is somehow related, we will need to do much more in depth analysis to find results.
+
+Now you've seen how to do some simple testing on different types of relationships between different variables. These results were admittedly not terribly exciting, but the process remains the same for exciting results. I encourage you to test this dataset for different realtionships, as well as look at other data sets to see if you can't find something intriguing.
+
+## Using machine learning to predict BTC movement
+
+Next we can try to predict movements in the price of bitcoin using this data. If we succeed, there may be a lot of money and/or a career in wall street waiting for us.
+
+To keep things nice and simple, we will trat this as a classification proble. In other words, we will try to predict if a certain set of variables belongs to one of several groups. In this case, we choose "Price of bitcoin goes up" and "Price of bitocin does not go up".
+
+```{r}
+# Rearrange our variables to fit our needs a little better.
+btc_predict <- agg_btc_goog[c(1, 2, 5, 6, 4,3)]
+# We check if the change in price of bitcoin divided by its absolute value is 1. In other words, we check if it is positive. TRUE if it is, FALSE otherwise.
+btc_predict$Delta_BTC <- btc_predict$Delta_BTC/abs(btc_predict$Delta_BTC) == 1
+# The classification algorithm excepts the data type 'factor'
+btc_predict$Delta_BTC <- as.factor(btc_predict$Delta_BTC)
+
+head(btc_predict)
+```
+
+We create a training and a testing set, and partition our data into each randomly.
+
+```{r}
+btc_predict = btc_predict[-1,] #Remove the first row with an N/A value for Delta_BTC
+
+set.seed(1234) # Setting the seed ensures reproducability of results
+
+#Assign 20% of variables to the test set, the rest to the training set
+test_random_forest <- btc_predict %>% 
+  group_by(Delta_BTC) %>%
+  sample_frac(.2) %>%
+  ungroup()
+
+train_random_forest<- btc_predict %>%
+  anti_join(test_random_forest, by="Date")
+```
+
+We will do a random forest classification with a forest size of 500.
+
+```{r}
+rf <- randomForest(Delta_BTC~., data=train_random_forest %>% select(-Date), ntree=500)
+
+test_predictions <- predict(rf, newdata=test_random_forest %>% select(-Date))
+
+rf
+
+table(pred=test_predictions, observed=test_random_forest$Delta_BTC)
+```
+
+In this trial, we were able to predict the movement direction of bitcoin 14/21 times, or 66.6% of the time. Not bad! This still begs the question whether this is a result of the google data or not. After all, we could be getting this result simply based off of the Closing value and the trade volume.
+
+To test this, we can do theis same classification again, but this time we remove the google search index variables from our model.
+
+```{r}
+predict_no_goog <- agg_btc_goog[c(1, 2, 4, 3)]
+
+predict_no_goog$Delta_BTC <- predict_no_goog$Delta_BTC/abs(predict_no_goog$Delta_BTC) == 1
+
+predict_no_goog$Delta_BTC <- as.factor(predict_no_goog$Delta_BTC)
+
+predict_no_goog = predict_no_goog[-1,]
+
+set.seed(1234)
+test_random_forest_2 <- predict_no_goog %>%
+  group_by(Delta_BTC) %>%
+  sample_frac(.2) %>%
+  ungroup()
+
+train_random_forest_2 <- predict_no_goog %>%
+  anti_join(test_random_forest_2, by="Date")
+
+rf_2 <- randomForest(Delta_BTC~., data=train_random_forest_2 %>% select(-Date), ntree=500)
+
+test_predictions_2 <- predict(rf_2, newdata=test_random_forest_2 %>% select(-Date))
+
+rf_2
+
+table(pred=test_predictions_2, observed=test_random_forest_2$Delta_BTC)
+```
+
+The difference here was not that much, with the trial results being the same as before. Though the estimated error rate was 3% lower, this can very reasonably be attributed to experimental variance.
+
+Next, we can try to do our original analysis, but instead of using the closing value of price of bitcoin, we can try the normalized value of that same variable calculated using the Box-Cox transformation above.
+
+```{r}
+predict_norm_close <- agg_btc_goog[c(7, 2, 4, 5, 6, 3)]
+
+predict_norm_close$Delta_BTC <- predict_norm_close$Delta_BTC / abs(predict_norm_close$Delta_BTC) == 1
+
+predict_norm_close$Delta_BTC <- as.factor(predict_norm_close$Delta_BTC)
+
+predict_norm_close = predict_norm_close[-1,]
+
+set.seed(1234)
+test_random_forest_3 <- predict_norm_close %>%
+  group_by(Delta_BTC) %>%
+  sample_frac(.2) %>%
+  ungroup()
+
+train_random_forest_3 <- predict_norm_close %>%
+  anti_join(test_random_forest_3, by="Date")
+
+rf_3 <- randomForest(Delta_BTC~., data=train_random_forest_3 %>% select(-Date), ntree=500)
+
+test_predictions_3 <- predict(rf_3, newdata=test_random_forest_3 %>% select(-Date))
+
+rf_3
+
+table(pred=test_predictions_3, observed=test_random_forest_3$Delta_BTC)
+```
+
+There seems to be a very slight improvement on the estimated error rate, but it is not small enough to attribute to variance between experiments. It seems that changes within this model do not produce significantly different results, and to improve the model would require the introduction of some other variable.
+
+## Conlclusion
+
+Though we were unable to find any incredible results duing our exploration of this data today, we very well could have, as the techniques we've covered certainly have the capability to do so. After all, having the creativity to approach a new problem with some admittedly simple statistical tools, as well as the magic of R, can bring forth incredible new insights into the issue. Take for example the famous Moneyball story: statistics applied in a new, creative way to an exisiting problem resulted in huge success. They even made a movie with Brad Pitt about it! Essentially, the main point I want to drive home is that you should at the very least give this a try, as an idea which seems so obvious to you, backed with some statistics, could be groundbreaking to others. Rarely do people recognize their own genius, as it is so commonplace to themselves!
+
+### Additional resources
+
+In addition to this guide, I encourage you to explore these (and other!) resources to widen the breadth and depth of your knowledge of R, data science, and statistics:
+
+Kaggle datasets: https://www.kaggle.com/datasets
+  - This is where I found the data on cryptocurrency, and is a very rich community-supported resource with quite a bit of depth
+  
+UMD CMSC320 Lecture notes: http://www.hcbravo.org/IntroDataSci/bookdown-notes/
+  - This course is where I was first exposed to data science, and it has done a great job of getting me up to speed on statistics and R
+  
+Google: https://www.google.com/
+  - This may seem obvious and redundant, but google is your best friend when learning about most things these days, statistics, R, programming, and data science all included! If you run into an issue, type the question you have verbatim into google. You may be surprised what you find.
+
+Regular expressions: https://regexr.com/
+  - Regex was used in this tutorial. If you're not familiar with Regex, I highly recommend you learn! It's incredibly useful.
+
+Heteroscedasticity: http://www.statsmakemecry.com/smmctheblog/confusing-stats-terms-explained-heteroscedasticity-heteroske.html
+  - Understand differences in variablility in data and the significances that has.
+
+Random Forests: https://towardsdatascience.com/the-random-forest-algorithm-d457d499ffcd
+  - Used in this tutorial, as well as widely throughout machine learning. If that is a field which interests you, you should definitely read more about it and udnerstand how and why it works.
+  
+Linear regression and residuals: http://www.stat.yale.edu/Courses/1997-98/101/linreg.htm
+  - Used extensively in this tutorial and a mightily important concept in statistics. Worth learning no matter how much you use statistics!
