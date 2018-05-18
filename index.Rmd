@@ -259,7 +259,7 @@ ggplot(agg_btc_goog, aes(x = Search_Index, y = Volume)) +
   labs(title="Google trends search index vs volume of trades")
 ```
 
-How about volume vs price of bitcoin?
+This looks too similar to the graph we just tested unsuccessully. How about volume vs price of bitcoin?
 
 ```{r}
 ggplot(agg_btc_goog, aes(x = Close, y = Volume)) +
@@ -267,7 +267,7 @@ ggplot(agg_btc_goog, aes(x = Close, y = Volume)) +
   labs(title="Price of BTC vs Volume of BTC trades")
 ```
 
-THis too looks like it could be a linear relationship. We can try the same tests that we had done before, and see if we fare any better.
+This too looks like it could be a linear relationship. We can try the same tests that we had done before, and see if we fare any better.
 
 ```{r}
 ggplot(agg_btc_goog, aes(x = Close, y = Volume)) +
@@ -290,7 +290,7 @@ Now you've seen how to do some simple testing on different types of relationship
 
 Next we can try to predict movements in the price of bitcoin using this data. If we succeed, there may be a lot of money and/or a career in wall street waiting for us.
 
-To keep things nice and simple, we will trat this as a classification proble. In other words, we will try to predict if a certain set of variables belongs to one of several groups. In this case, we choose "Price of bitcoin goes up" and "Price of bitocin does not go up".
+To keep things nice and simple, we will treat this as a classification proble. In other words, we will try to predict if a certain set of variables belongs to one of several groups. In this case, we choose "Price of bitcoin goes up" and "Price of bitocin does not go up".
 
 ```{r}
 # Rearrange our variables to fit our needs a little better.
@@ -332,7 +332,7 @@ rf
 table(pred=test_predictions, observed=test_random_forest$Delta_BTC)
 ```
 
-In this trial, we were able to predict the movement direction of bitcoin 14/21 times, or 66.6% of the time. Not bad! This still begs the question whether this is a result of the google data or not. After all, we could be getting this result simply based off of the Closing value and the trade volume.
+In this trial, we were able to predict the movement direction of bitcoin 13/21 times, or 61.9% of the time. Not bad! This still begs the question whether this is a result of the google data or not. After all, we could be getting this result simply based off of the Closing value and the trade volume.
 
 To test this, we can do theis same classification again, but this time we remove the google search index variables from our model.
 
@@ -363,7 +363,7 @@ rf_2
 table(pred=test_predictions_2, observed=test_random_forest_2$Delta_BTC)
 ```
 
-The difference here was not that much, with the trial results being the same as before. Though the estimated error rate was 3% lower, this can very reasonably be attributed to experimental variance.
+The difference here was not that much, with the trial results being the same as before. Though the estimated error rate was 3% lower, this can very reasonably be attributed to experimental variance. It seems that including the google trends in our model did not end up making much of a difference.  
 
 Next, we can try to do our original analysis, but instead of using the closing value of price of bitcoin, we can try the normalized value of that same variable calculated using the Box-Cox transformation above.
 
@@ -394,9 +394,9 @@ rf_3
 table(pred=test_predictions_3, observed=test_random_forest_3$Delta_BTC)
 ```
 
-There seems to be a very slight improvement on the estimated error rate, but it is not small enough to attribute to variance between experiments. It seems that changes within this model do not produce significantly different results, and to improve the model would require the introduction of some other variable.
+There seems to be a very slight improvement on the estimated error rate and trial results, but it is small enough to attribute to variance between experiments. It seems that changes within this model do not produce significantly different results, and to improve the model would require the introduction of some other variable.
 
-## Conlclusion
+## Conclusion
 
 Though we were unable to find any incredible results duing our exploration of this data today, we very well could have, as the techniques we've covered certainly have the capability to do so. After all, having the creativity to approach a new problem with some admittedly simple statistical tools, as well as the magic of R, can bring forth incredible new insights into the issue. Take for example the famous Moneyball story: statistics applied in a new, creative way to an exisiting problem resulted in huge success. They even made a movie with Brad Pitt about it! Essentially, the main point I want to drive home is that you should at the very least give this a try, as an idea which seems so obvious to you, backed with some statistics, could be groundbreaking to others. Rarely do people recognize their own genius, as it is so commonplace to themselves!
 
@@ -405,22 +405,29 @@ Though we were unable to find any incredible results duing our exploration of th
 In addition to this guide, I encourage you to explore these (and other!) resources to widen the breadth and depth of your knowledge of R, data science, and statistics:
 
 Kaggle datasets: https://www.kaggle.com/datasets
+
   - This is where I found the data on cryptocurrency, and is a very rich community-supported resource with quite a bit of depth
   
 UMD CMSC320 Lecture notes: http://www.hcbravo.org/IntroDataSci/bookdown-notes/
+
   - This course is where I was first exposed to data science, and it has done a great job of getting me up to speed on statistics and R
   
 Google: https://www.google.com/
+
   - This may seem obvious and redundant, but google is your best friend when learning about most things these days, statistics, R, programming, and data science all included! If you run into an issue, type the question you have verbatim into google. You may be surprised what you find.
 
 Regular expressions: https://regexr.com/
+
   - Regex was used in this tutorial. If you're not familiar with Regex, I highly recommend you learn! It's incredibly useful.
 
 Heteroscedasticity: http://www.statsmakemecry.com/smmctheblog/confusing-stats-terms-explained-heteroscedasticity-heteroske.html
+
   - Understand differences in variablility in data and the significances that has.
 
 Random Forests: https://towardsdatascience.com/the-random-forest-algorithm-d457d499ffcd
+
   - Used in this tutorial, as well as widely throughout machine learning. If that is a field which interests you, you should definitely read more about it and udnerstand how and why it works.
   
 Linear regression and residuals: http://www.stat.yale.edu/Courses/1997-98/101/linreg.htm
+
   - Used extensively in this tutorial and a mightily important concept in statistics. Worth learning no matter how much you use statistics!
